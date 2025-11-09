@@ -8,7 +8,7 @@ This document provides comprehensive, step-by-step instructions for migrating Ne
 
 ## Migration Phases Overview
 
-The migration process consists of 10 sequential phases. Each phase builds on the previous one and includes verification steps.
+The migration process consists of 8 sequential phases. Each phase builds on the previous one and includes verification steps.
 
 | Phase | Name | Purpose | Key Outputs |
 |-------|------|---------|-------------|
@@ -18,10 +18,8 @@ The migration process consists of 10 sequential phases. Each phase builds on the
 | **4** | Generate Workflow | Translate control flow to Python | workflow.py with @workflow.defn class |
 | **5** | Generate Worker | Create worker registration | worker.py |
 | **6** | Generate Starter | Create workflow execution client | starter.py |
-| **7** | Generate Tests | Create unit and integration tests | test_*.py files |
-| **8** | Setup and Validation | Install dependencies and validate | All tests pass, mypy passes |
-| **9** | End-to-End Test | Run workflow against Temporal | Workflow executes successfully |
-| **10** | Documentation | Create comprehensive docs | README.md, comparison docs |
+| **7** | Setup and Validation | Install dependencies and validate | mypy passes |
+| **8** | Documentation | Create comprehensive docs | README.md, comparison docs |
 
 **Estimated Time**: 30-60 minutes depending on workflow complexity
 
@@ -50,15 +48,7 @@ The migration process consists of 10 sequential phases. Each phase builds on the
    curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
 
-3. **Temporal CLI**
-   ```bash
-   # macOS
-   brew install temporal
-
-   # Windows/Linux: See https://docs.temporal.io/cli#install
-   ```
-
-4. **jq (JSON processor)**
+3. **jq (JSON processor)**
    ```bash
    # macOS
    brew install jq
@@ -67,18 +57,11 @@ The migration process consists of 10 sequential phases. Each phase builds on the
    apt-get install jq  # or equivalent for your distro
    ```
 
-5. **Valid Conductor JSON workflow file**
+4. **Valid Conductor JSON workflow file**
    ```bash
    # Validate your Conductor JSON
    jq empty your-workflow.json
    ```
-
-### Optional Tools
-
-- **Temporal dev server** (for Phase 9 end-to-end testing)
-  ```bash
-  temporal server start-dev
-  ```
 
 ---
 
@@ -94,8 +77,6 @@ The migration produces a complete Python project:
   workflow.py              # Workflow definition (@workflow.defn)
   worker.py                # Worker registration and execution
   starter.py               # Workflow starter client
-  test_workflow.py         # Workflow unit tests (pytest)
-  test_activities.py       # Activity unit tests (pytest)
   pyproject.toml           # Dependencies and project metadata
   setup.sh                 # Automated setup script
   README.md                # Setup and usage instructions
@@ -108,8 +89,6 @@ The migration produces a complete Python project:
 
 - `temporalio>=1.5.0` - Temporal Python SDK
 - `httpx>=0.26.0` - HTTP client for HTTP activities
-- `pytest>=7.4.0` - Testing framework
-- `pytest-asyncio>=0.21.0` - Async test support
 - `mypy>=1.7.0` - Type checking
 
 ---
@@ -260,8 +239,6 @@ jq -e '.tasks | length > 0' conductor-analysis.json
 
    [project.optional-dependencies]
    dev = [
-       "pytest>=7.4.0",
-       "pytest-asyncio>=0.21.0",  # Required for async test support
        "mypy>=1.7.0",
    ]
 
@@ -275,7 +252,6 @@ jq -e '.tasks | length > 0' conductor-analysis.json
    __pycache__/
    *.py[cod]
    *$py.class
-   .pytest_cache/
    .mypy_cache/
    *.egg-info/
    dist/
@@ -712,123 +688,12 @@ grep -q 'start_workflow(' {project_name}/starter.py
 
 ---
 
-## Phase 3: Testing
-
-### Phase 3.1: Generate Tests
-
-#### Objectives
-- Create unit tests for activities
-- Create integration tests for workflows
-- Test control flow branches
-- Use Temporal testing framework
-
-#### Tasks
-
-1. **Create test_activities.py**
-   ```python
-   import pytest
-   from .activities import *
-
-   @pytest.mark.asyncio
-   async def test_simple_activity():
-       """Test simple activity function."""
-       result = await simple_task_activity(input_param="test")
-       assert result is not None
-       assert result["status"] == "success"
-
-   @pytest.mark.asyncio
-   async def test_http_activity():
-       """Test HTTP activity function."""
-       # Mock httpx if needed or test against real endpoint
-       result = await http_task_activity(
-           uri="https://example.com/api/test",
-           method="GET"
-       )
-       assert result is not None
-       assert "status_code" in result
-   ```
-
-2. **Create test_workflow.py**
-
-   > ⚠️ **CRITICAL: CORRECT TEST ENVIRONMENT API USAGE**
-   >
-   > The `WorkflowEnvironment.start_time_skipping()` method returns a coroutine that must be **awaited first**, then the worker is created with the environment's client.
-   >
-   > **Incorrect pattern**: `async with await WorkflowEnvironment.start_time_skipping() as env:` ❌
-   > **Correct pattern**: First await, then use the env object ✓
-
-   ```python
-   import pytest
-   from temporalio.testing import WorkflowEnvironment
-   from temporalio.worker import Worker
-
-   from .workflow import MyWorkflow
-   from .shared import WorkflowInput
-   # Import specific activity functions (same as in workflow.py)
-   from .activities import simple_task_activity, http_task_activity
-
-   @pytest.mark.asyncio
-   async def test_workflow_happy_path():
-       """Test workflow with valid input."""
-       # CORRECT: Await the environment creation first
-       env = await WorkflowEnvironment.start_time_skipping()
-
-       # Then create worker with the environment's client
-       async with Worker(
-           env.client,
-           task_queue="test-queue",
-           workflows=[MyWorkflow],
-           activities=[simple_task_activity, http_task_activity]
-       ):
-           workflow_input = WorkflowInput(
-               param1="test_value",
-               param2=123
-           )
-
-           result = await env.client.execute_workflow(
-               MyWorkflow.run,
-               workflow_input,
-               id="test-workflow-id",
-               task_queue="test-queue"
-           )
-
-           assert result is not None
-           # Add specific assertions
-
-   @pytest.mark.asyncio
-   async def test_workflow_conditional_branch():
-       """Test workflow conditional logic."""
-       # Test different branches of SWITCH statements
-       pass
-   ```
-
-3. **Test control flow branches**
-   - Test each SWITCH case
-   - Test loop entry and exit conditions
-   - Test parallel execution results
-
-#### Verification
-```bash
-test -f {project_name}/test_activities.py
-test -f {project_name}/test_workflow.py
-python3 -m py_compile {project_name}/test_*.py
-
-# Verify test imports and basic structure
-python3 -c "import sys; sys.path.insert(0, '.'); from {project_name}.test_workflow import test_workflow_happy_path; print('✓ Test imports verified')" || {
-    echo "❌ Test import errors detected! Check test file imports"
-    exit 1
-}
-```
-
----
-
-### Phase 3.2: Setup and Validation
+## Phase 3: Setup and Validation
 
 #### Objectives
 - Install project dependencies
 - Run syntax validation
 - Run type checking with mypy strict
-- Run all unit tests
 - Create automated setup script
 
 #### Tasks
@@ -838,13 +703,13 @@ python3 -c "import sys; sys.path.insert(0, '.'); from {project_name}.test_workfl
    cd {project_name}
    uv venv
    uv add temporalio httpx
-   uv add --dev pytest pytest-asyncio mypy
+   uv add mypy
 
    # CRITICAL: Sync all dependencies including dev extras
    uv sync --all-extras
 
    # Verify all required packages are installed
-   uv pip list | grep -E "(temporalio|pytest|pytest-asyncio|mypy)" || {
+   uv pip list | grep -E "(temporalio|mypy)" || {
        echo "❌ Missing required dependencies"
        exit 1
    }
@@ -861,13 +726,7 @@ python3 -c "import sys; sys.path.insert(0, '.'); from {project_name}.test_workfl
    ```
    Fix any type errors until mypy passes
 
-4. **Run unit tests**
-   ```bash
-   pytest -v
-   ```
-   Fix any failing tests
-
-5. **Create setup.sh**
+4. **Create setup.sh**
    ```bash
    #!/bin/bash
    set -e
@@ -890,7 +749,7 @@ python3 -c "import sys; sys.path.insert(0, '.'); from {project_name}.test_workfl
    echo "Installing dependencies..."
    uv venv
    uv add temporalio httpx
-   uv add --dev pytest pytest-asyncio mypy
+   uv add --dev mypy
 
    # Sync all dependencies including dev extras
    echo "Syncing all dependencies..."
@@ -898,14 +757,10 @@ python3 -c "import sys; sys.path.insert(0, '.'); from {project_name}.test_workfl
 
    # Verify dependencies installed
    echo "Verifying dependencies..."
-   uv pip list | grep -E "(temporalio|pytest|pytest-asyncio|mypy)" || {
+   uv pip list | grep -E "(temporalio|mypy)" || {
        echo "Error: Required dependencies missing"
        exit 1
    }
-
-   # Run tests
-   echo "Running tests..."
-   pytest -v
 
    # Run type checking
    echo "Running type checking..."
@@ -914,17 +769,16 @@ python3 -c "import sys; sys.path.insert(0, '.'); from {project_name}.test_workfl
    echo "Setup complete!"
    echo ""
    echo "Next steps:"
-   echo "1. Start Temporal dev server: temporal server start-dev"
-   echo "2. Start worker: uv run worker.py"
-   echo "3. Execute workflow: uv run starter.py"
+   echo "1. Start worker: uv run worker.py"
+   echo "2. Execute workflow: uv run starter.py"
    ```
 
-6. **Make executable**
+5. **Make executable**
    ```bash
    chmod +x setup.sh
    ```
 
-7. **Create CONDUCTOR_MIGRATION_NOTES.md**
+6. **Create CONDUCTOR_MIGRATION_NOTES.md**
    Document any:
    - Conductor features that couldn't be translated
    - Manual implementation steps required
@@ -935,102 +789,13 @@ python3 -c "import sys; sys.path.insert(0, '.'); from {project_name}.test_workfl
 ```bash
 cd {project_name}
 python3 -c 'import sys; sys.path.insert(0, "."); import workflow, activities, shared, worker, starter'
-pytest -v
 test -f setup.sh
 test -x setup.sh
 ```
 
 ---
 
-## Phase 4: Deployment & Documentation
-
-### Phase 4.1: End-to-End Test
-
-#### Objectives
-- Start Temporal dev server
-- Start worker
-- Execute workflow
-- Verify workflow completion
-- Validate results
-
-#### Tasks
-
-1. **Unset Temporal environment variables**
-   ```bash
-   unset TEMPORAL_CLI_ADDRESS TEMPORAL_CLI_NAMESPACE TEMPORAL_CLI_TLS_CERT \
-         TEMPORAL_CLI_TLS_KEY TEMPORAL_CERT_PATH TEMPORAL_KEY_PATH \
-         TEMPORAL_NAMESPACE TEMPORAL_ADDRESS TEMPORAL_API_KEY \
-         TEMPORAL_HOST_PORT TEMPORAL_TLS_CERT TEMPORAL_TLS_KEY
-   ```
-   This ensures connection to local dev server (localhost:7233)
-
-2. **Check if Temporal dev server is running**
-   ```bash
-   temporal workflow list --namespace default >/dev/null 2>&1
-   ```
-   If not running:
-   ```bash
-   temporal server start-dev &
-   sleep 5
-   ```
-
-3. **Start worker in background**
-   ```bash
-   cd {project_name}
-   uv run worker.py > worker.log 2>&1 &
-   WORKER_PID=$!
-   echo $WORKER_PID > worker.pid
-   sleep 3
-   ps -p $WORKER_PID >/dev/null || { echo "ERROR: Worker failed"; tail worker.log; exit 1; }
-   ```
-
-4. **Execute workflow**
-   ```bash
-   uv run starter.py
-   ```
-   Capture workflow ID from output
-
-5. **Verify workflow completion**
-   ```bash
-   temporal workflow show --workflow-id <workflow_id> --namespace default
-   ```
-   Check:
-   - Status is COMPLETED
-   - No errors in execution history
-   - Result matches expectations
-
-6. **Validate with Temporal CLI**
-   ```bash
-   # List recent workflows
-   temporal workflow list --namespace default --output json
-
-   # Show specific workflow details
-   temporal workflow show --workflow-id <workflow_id>
-   ```
-
-7. **Clean up**
-   ```bash
-   kill $(cat worker.pid)
-   rm worker.pid
-   ```
-
-8. **Document results**
-   Create e2e-test-results.json with test outcomes
-
-#### Verification
-```bash
-test -f e2e-test-results.json
-jq empty e2e-test-results.json
-```
-
-#### Common Issues
-- **Worker fails to start**: Check worker.log for connection errors
-- **Workflow hangs**: Check for bugs in workflow logic, use `temporal workflow show` to see progress
-- **Activity timeouts**: Increase start_to_close_timeout if tasks are slow
-
----
-
-### Phase 4.2: Documentation and Finalization
+## Phase 4: Documentation and Finalization
 
 #### Objectives
 - Update README with comprehensive instructions
@@ -1062,11 +827,6 @@ jq empty e2e-test-results.json
       ./setup.sh
       ```
 
-   2. Start Temporal dev server (in separate terminal):
-      ```bash
-      temporal server start-dev
-      ```
-
    ## Running the Workflow
 
    1. Start the worker (in separate terminal):
@@ -1082,18 +842,6 @@ jq empty e2e-test-results.json
    3. View workflow in Temporal Web UI:
       http://localhost:8233
 
-   ## Testing
-
-   Run unit tests:
-   ```bash
-   pytest -v
-   ```
-
-   Run type checking:
-   ```bash
-   mypy {project_name} --strict
-   ```
-
    ## Project Structure
 
    - `shared.py` - Data models (dataclasses)
@@ -1101,7 +849,6 @@ jq empty e2e-test-results.json
    - `workflow.py` - Workflow definition
    - `worker.py` - Worker registration
    - `starter.py` - Workflow starter
-   - `test_*.py` - Unit tests
 
    ## Migration Notes
 
@@ -1125,50 +872,6 @@ jq empty e2e-test-results.json
    - Reference original Conductor task names
    - Explain data transformations
 
-4. **Create migration-summary.json**
-   ```json
-   {
-     "migration_date": "ISO 8601 timestamp",
-     "conductor_file": "path/to/conductor.json",
-     "workflow_name": "name",
-     "project_name": "project_name",
-     "statistics": {
-       "total_conductor_tasks": 10,
-       "activities_created": 5,
-       "workflow_functions": 1,
-       "test_functions": 8,
-       "lines_of_code": 500
-     },
-     "task_type_mapping": {
-       "SIMPLE": 5,
-       "HTTP": 2,
-       "SWITCH": 1,
-       "FORK_JOIN": 1
-     },
-     "validation_results": {
-       "syntax_valid": true,
-       "type_checking_passed": true,
-       "unit_tests_passed": true,
-       "e2e_test_passed": true
-     },
-     "notes": []
-   }
-   ```
-
-5. **Check git status**
-   ```bash
-   git status --porcelain
-   ```
-
-#### Verification
-```bash
-test -f {project_name}/README.md
-grep -q 'Setup' {project_name}/README.md
-test -f {project_name}/CONDUCTOR_COMPARISON.md
-test -f migration-summary.json
-jq empty migration-summary.json
-```
-
 ---
 
 ## Related Documentation
@@ -1176,7 +879,7 @@ jq empty migration-summary.json
 - [Architecture Guide](./conductor-architecture.md) - Conductor vs Temporal concepts and mappings
 - [Primitives Reference](./conductor-primitives-reference.md) - Detailed primitive-by-primitive mapping with complete examples
 - [Human Interaction Patterns](./conductor-human-interaction.md) - Implementing approvals, signals, updates, and human-in-the-loop workflows
-- [Quality Assurance](./conductor-quality-assurance.md) - Testing, validation, and success criteria
+- [Quality Assurance](./conductor-quality-assurance.md) - Validation, and success criteria
 - [Troubleshooting](./conductor-troubleshooting.md) - Common issues and solutions
 
 ---

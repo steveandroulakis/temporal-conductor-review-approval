@@ -16,7 +16,6 @@ This document provides a comprehensive primitive-by-primitive mapping reference 
 - **Conceptual understanding**: See [Architecture Reference](./conductor-architecture.md) for high-level architectural differences
 - **Step-by-step migration**: See [Migration Guide](./conductor-migration-guide.md) for phase-by-phase instructions
 - **Human interaction patterns**: See [Human Interaction Patterns](./conductor-human-interaction.md) for approvals, signals, and updates
-- **Testing and validation**: See [Quality Assurance](./conductor-quality-assurance.md) for standards and testing strategies
 
 This reference is designed for active migrators who need detailed lookup information for specific Conductor constructs.
 
@@ -660,7 +659,6 @@ This dedicated guide provides complete coverage of:
 - **Approval workflows**: With validation, timeout handling, and escalation
 - **Multiple reviewers**: Parallel approval patterns
 - **Approval loops**: Retry until approved patterns
-- **Testing**: Complete examples for testing signals and updates
 - **Data flow**: Translating `${user_action.output.*}` references
 
 **Quick Signal Example:**
@@ -705,7 +703,7 @@ class ApprovalWorkflow:
 # Send update: result = await handle.execute_update(ApprovalWorkflow.submit_approval, True)
 ```
 
-**See the [Human Interaction Patterns Guide](./conductor-human-interaction.md) for production-ready patterns with timeout handling, multiple approvals, and complete testing examples.**
+**See the [Human Interaction Patterns Guide](./conductor-human-interaction.md) for production-ready patterns with timeout handling, multiple approvals.**
 
 ---
 
@@ -803,8 +801,6 @@ When migrating from Conductor to Temporal:
 4. **Task Registration**: Remove task registration step; activities auto-discovered
 5. **Error Config to Code**: Move retry/timeout configs from JSON to Python retry policies
 6. **Events to Signals**: Replace Conductor events with Temporal signals
-7. **Schedules**: Implement external cron jobs as Temporal Schedules
-8. **Testing**: Shift from integration tests against Conductor server to unit tests with test environment
 
 ---
 

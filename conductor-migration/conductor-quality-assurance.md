@@ -6,7 +6,7 @@ This document defines the quality standards, validation procedures, and success 
 
 ---
 
-## Validation and Testing
+## Validation
 
 ### Syntax Validation
 ```bash
@@ -20,36 +20,9 @@ mypy {project_name} --strict --ignore-missing-imports
 ```
 Must pass with no type errors.
 
-### Unit Tests
-```bash
-cd {project_name}
-pytest -v
-```
-All tests must pass.
-
-### Integration Test (End-to-End)
-```bash
-# Terminal 1: Start Temporal dev server
-temporal server start-dev
-
-# Terminal 2: Start worker
-uv run worker.py
-
-# Terminal 3: Execute workflow
-uv run starter.py
-
-# Verify in Temporal Web UI
-open http://localhost:8233
-```
-
 ### Verification Checklist
 - [ ] All Python files compile without syntax errors
 - [ ] mypy --strict passes with no errors
-- [ ] All unit tests pass
-- [ ] Worker starts successfully and polls task queue
-- [ ] Workflow executes and completes successfully
-- [ ] Workflow result matches expectations
-- [ ] No errors in Temporal Web UI execution history
 
 ---
 
@@ -61,10 +34,6 @@ open http://localhost:8233
 ✅ **Syntax validation** passes for all Python files
 
 ✅ **Type checking** passes with mypy --strict
-
-✅ **Unit tests** pass with good coverage
-
-✅ **End-to-end execution** succeeds against Temporal dev server
 
 ✅ **Documentation** complete with setup and usage instructions
 
@@ -82,7 +51,6 @@ open http://localhost:8233
 - [ ] All activities implemented
 - [ ] Workflow logic correctly translated
 - [ ] Worker and starter scripts functional
-- [ ] Comprehensive test suite
 - [ ] Complete documentation (README, comparison, migration notes)
 - [ ] Setup script for easy installation
 - [ ] Migration summary report
@@ -167,151 +135,6 @@ open http://localhost:8233
 
 ---
 
-## Testing Standards
-
-### Activity Test Coverage
-
-Each activity must have:
-- ✅ Happy path test (successful execution)
-- ✅ Error handling test (exception cases)
-- ✅ Input validation test (invalid inputs)
-
-```python
-@pytest.mark.asyncio
-async def test_fetch_user_success():
-    """Test successful user fetch."""
-    result = await fetch_user(user_id="123")
-    assert result["name"] == "John Doe"
-
-@pytest.mark.asyncio
-async def test_fetch_user_not_found():
-    """Test user not found error."""
-    with pytest.raises(ValueError):
-        await fetch_user(user_id="invalid")
-```
-
-### Workflow Test Coverage
-
-Each workflow must have:
-- ✅ Happy path test (normal execution flow)
-- ✅ Conditional branch tests (each SWITCH case)
-- ✅ Loop behavior tests (entry/exit conditions)
-- ✅ Error handling tests (activity failures)
-
-```python
-@pytest.mark.asyncio
-async def test_workflow_approved_path():
-    """Test workflow when approval is granted."""
-    env = await WorkflowEnvironment.start_time_skipping()
-    async with Worker(env.client, task_queue="test", workflows=[ApprovalWorkflow], activities=[...]):
-        result = await env.client.execute_workflow(
-            ApprovalWorkflow.run,
-            WorkflowInput(status="APPROVED"),
-            id="test-approved",
-            task_queue="test"
-        )
-        assert result.outcome == "success"
-```
-
-### Human Interaction Test Coverage
-
-For workflows with signals or updates (HUMAN_TASK, approval patterns), additional tests are required:
-
-**Signal-based workflows:**
-- ✅ Test signal reception and workflow continuation
-- ✅ Test timeout behavior when signal not received
-- ✅ Test workflow state queries before/after signal
-
-```python
-@pytest.mark.asyncio
-async def test_approval_signal():
-    """Test workflow receiving approval signal."""
-    async with await WorkflowEnvironment.start_time_skipping() as env:
-        async with Worker(env.client, task_queue="test", workflows=[ApprovalWorkflow], activities=[...]):
-            # Start workflow
-            handle = await env.client.start_workflow(
-                ApprovalWorkflow.run,
-                args=[Request(item_id="test")],
-                id="test-signal",
-                task_queue="test"
-            )
-
-            # Send approval signal
-            await handle.signal(ApprovalWorkflow.receive_approval, Approval(approved=True))
-
-            # Verify completion
-            result = await handle.result()
-            assert result.approved is True
-```
-
-**Update-based workflows:**
-- ✅ Test update validation (reject invalid inputs)
-- ✅ Test update return values
-- ✅ Test multiple updates (if applicable)
-- ✅ Test update rejection when workflow state doesn't allow it
-
-```python
-@pytest.mark.asyncio
-async def test_approval_update_validation():
-    """Test workflow update validation."""
-    async with await WorkflowEnvironment.start_time_skipping() as env:
-        async with Worker(env.client, task_queue="test", workflows=[ApprovalWorkflow], activities=[...]):
-            handle = await env.client.start_workflow(
-                ApprovalWorkflow.run,
-                args=[Request(item_id="test")],
-                id="test-update",
-                task_queue="test"
-            )
-
-            # Submit valid approval
-            result = await handle.execute_update(
-                ApprovalWorkflow.submit_approval,
-                Approval(approved=True, reviewer="test@example.com")
-            )
-            assert result == "Approval recorded"
-
-            # Try to submit again - should be rejected
-            with pytest.raises(WorkflowUpdateFailedError):
-                await handle.execute_update(
-                    ApprovalWorkflow.submit_approval,
-                    Approval(approved=False, reviewer="other@example.com")
-                )
-```
-
-**Timeout testing:**
-- ✅ Test workflow behavior when human input times out
-- ✅ Test escalation or fallback logic
-
-```python
-@pytest.mark.asyncio
-async def test_approval_timeout():
-    """Test workflow timeout when approval not received."""
-    async with await WorkflowEnvironment.start_time_skipping() as env:
-        async with Worker(env.client, task_queue="test", workflows=[TimedApprovalWorkflow], activities=[...]):
-            # Start workflow - don't send approval
-            result = await env.client.execute_workflow(
-                TimedApprovalWorkflow.run,
-                args=[Request(item_id="test")],
-                id="test-timeout",
-                task_queue="test"
-            )
-
-            # Should complete with timeout status
-            assert result.approved is False
-            assert result.reason == "timeout"
-```
-
-For complete examples and patterns, see the [Human Interaction Patterns guide](./conductor-human-interaction.md).
-
-### Integration Test Requirements
-
-- ✅ Full workflow execution against test environment
-- ✅ All activities execute successfully
-- ✅ Data flows correctly between tasks
-- ✅ Final result matches expected output
-
----
-
 ## Performance Standards
 
 ### Response Time Targets
@@ -342,7 +165,6 @@ For complete examples and patterns, see the [Human Interaction Patterns guide](.
    - ✅ Prerequisites
    - ✅ Setup instructions
    - ✅ Running instructions
-   - ✅ Testing instructions
    - ✅ Troubleshooting section
 
 2. **CONDUCTOR_COMPARISON.md**
@@ -373,17 +195,7 @@ For complete examples and patterns, see the [Human Interaction Patterns guide](.
 # Run before each commit
 python3 -m py_compile {project_name}/*.py  # Syntax
 mypy {project_name} --strict                # Types
-pytest -v                                    # Tests
 ```
-
-### CI/CD Pipeline Checks
-
-1. **Linting**: ruff or flake8
-2. **Type checking**: mypy --strict
-3. **Unit tests**: pytest with coverage > 80%
-4. **Integration tests**: E2E workflow execution
-5. **Security scan**: bandit or similar
-6. **Dependency check**: pip-audit or safety
 
 ---
 
@@ -397,54 +209,17 @@ A migration must pass ALL quality gates before being considered complete:
 - ✅ No code smells (duplicate code, long functions, etc.)
 - ✅ Follows PEP 8 style guide
 
-### Gate 2: Testing
-- ✅ All unit tests pass
-- ✅ Test coverage > 80%
-- ✅ All critical paths tested
-- ✅ E2E test passes
-
-### Gate 3: Documentation
+### Gate 2: Documentation
 - ✅ README complete and accurate
 - ✅ All code has docstrings
 - ✅ Migration notes documented
 - ✅ Troubleshooting guide included
 
-### Gate 4: Functionality
-- ✅ Workflow executes successfully
-- ✅ All activities complete without errors
-- ✅ Results match expected behavior
-- ✅ No errors in Temporal UI
-
-### Gate 5: Production Readiness
+### Gate 3: Production Readiness
 - ✅ Error handling implemented
 - ✅ Timeouts configured appropriately
 - ✅ Retry policies defined
 - ✅ Logging configured
-- ✅ Monitoring hooks added (optional)
-
----
-
-## Quality Assurance Workflow
-
-```mermaid
-graph TD
-    A[Code Complete] --> B{Syntax Valid?}
-    B -->|No| C[Fix Syntax Errors]
-    C --> B
-    B -->|Yes| D{Types Valid?}
-    D -->|No| E[Fix Type Errors]
-    E --> D
-    D -->|Yes| F{Tests Pass?}
-    F -->|No| G[Fix Test Failures]
-    G --> F
-    F -->|Yes| H{E2E Pass?}
-    H -->|No| I[Fix E2E Issues]
-    I --> H
-    H -->|Yes| J{Docs Complete?}
-    J -->|No| K[Complete Documentation]
-    K --> J
-    J -->|Yes| L[✅ Migration Complete]
-```
 
 ---
 

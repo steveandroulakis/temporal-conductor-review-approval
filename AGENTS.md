@@ -91,36 +91,6 @@ uv --version
 uv python list
 ```
 
-### 2.2 Temporal CLI (Optional for Development)
-
-The Temporal CLI is useful for local development and debugging. While not required for code generation, it's recommended for running and testing workflows.
-
-**Installation instructions:**
-
-- **macOS**:
-  ```bash
-  brew install temporal
-  ```
-
-- **Windows amd64**:
-  Download from: https://temporal.download/cli/archive/latest?platform=windows&arch=amd64
-
-- **Windows arm64**:
-  Download from: https://temporal.download/cli/archive/latest?platform=windows&arch=arm64
-
-- **Linux amd64**:
-  ```bash
-  curl -sSf https://temporal.download/cli.sh | sh
-  ```
-
-- **Linux arm64**:
-  Download from: https://temporal.download/cli/archive/latest?platform=linux&arch=arm64
-
-**Verify installation:**
-```bash
-temporal --version
-```
-
 ---
 
 ## 3) Project Setup (new projects)

@@ -520,78 +520,11 @@ print(f"Current status: {status['status']}")
 
 ---
 
-## Testing Human Interaction Workflows
-
-### Unit Testing Updates
-
-```python
-import pytest
-from temporalio.testing import WorkflowEnvironment
-
-@pytest.mark.asyncio
-async def test_approval_workflow():
-    async with await WorkflowEnvironment.start_time_skipping() as env:
-        async with Worker(
-            env.client,
-            task_queue="test-queue",
-            workflows=[ApprovalWorkflow],
-            activities=[notify_approval_needed, process_approval]
-        ):
-            # Start workflow
-            handle = await env.client.start_workflow(
-                ApprovalWorkflow.run,
-                args=[Request(item_id="test-123")],
-                id="test-approval-wf",
-                task_queue="test-queue"
-            )
-
-            # Simulate human submitting approval
-            result = await handle.execute_update(
-                ApprovalWorkflow.submit_approval,
-                Approval(approved=True, reviewer="test@example.com")
-            )
-
-            assert result == "Approval recorded"
-
-            # Verify workflow completes successfully
-            final_result = await handle.result()
-            assert final_result.approved is True
-```
-
-### Testing Timeout Behavior
-
-```python
-@pytest.mark.asyncio
-async def test_approval_timeout():
-    async with await WorkflowEnvironment.start_time_skipping() as env:
-        async with Worker(
-            env.client,
-            task_queue="test-queue",
-            workflows=[TimedApprovalWorkflow],
-            activities=[notify_approval_needed]
-        ):
-            handle = await env.client.start_workflow(
-                TimedApprovalWorkflow.run,
-                args=[Request(item_id="test-timeout")],
-                id="test-timeout-wf",
-                task_queue="test-queue"
-            )
-
-            # Don't send approval - let it timeout
-            # Time-skipping environment will fast-forward through timeout
-
-            final_result = await handle.result()
-            assert final_result.approved is False
-            assert final_result.reason == "timeout"
-```
-
----
-
 ## Next Steps
 
 After implementing human interaction patterns:
 
-1. **Review [Quality Assurance](./conductor-quality-assurance.md)** for testing standards
+1. **Review [Quality Assurance](./conductor-quality-assurance.md)** for standards
 2. **Implement notification activities** to alert humans when input is needed (email, Slack, UI)
 3. **Add queries** to allow UIs to check workflow status
 4. **Consider audit trails** - log all human decisions for compliance
@@ -604,7 +537,6 @@ After implementing human interaction patterns:
 - **Temporal Signals Documentation**: https://docs.temporal.io/develop/python/message-passing#signals
 - **Temporal Updates Documentation**: https://docs.temporal.io/develop/python/message-passing#updates
 - **Temporal Queries Documentation**: https://docs.temporal.io/develop/python/message-passing#queries
-- **Testing with Signals/Updates**: https://docs.temporal.io/develop/python/testing-suite
 
 ---
 

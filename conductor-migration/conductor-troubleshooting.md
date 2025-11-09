@@ -107,13 +107,6 @@ def process(data: Dict[str, Any]) -> Optional[str]:
 
 ---
 
-### Test Failures
-**Symptom**: Unit tests fail after generation
-
-**Solution**: Review test assertions, ensure mock data matches actual behavior, fix activity implementations
-
----
-
 ### Worker Connection Errors
 **Symptom**: Worker can't connect to Temporal server
 
@@ -157,32 +150,9 @@ tail -f worker.log
 
 ## Critical Documented Pitfalls
 
-These issues were encountered during actual migrations and have specific, tested solutions.
+These issues were encountered during actual migrations and have specific solutions.
 
-### Issue 1: Test Dependency Not Found
-
-**Symptom**: `ModuleNotFoundError: No module named 'temporalio'` or `ModuleNotFoundError: No module named 'pytest_asyncio'` when running pytest
-
-**Root Cause**: Dev dependencies not fully installed or synced
-
-**Solution**:
-```bash
-# Always sync all extras after installing dependencies
-uv sync --all-extras
-
-# Verify all required packages are present
-uv pip list | grep -E "(temporalio|pytest|pytest-asyncio|mypy)"
-```
-
-**Prevention**: Always run `uv sync --all-extras` after modifying pyproject.toml or before running tests
-
-**Detection**: Run `uv pip list` and check for all required packages
-
----
-
-### Issue 2: Workflow Sandbox Violation (CRITICAL)
-
-**Symptom**: `RuntimeError: Failed validating workflow {WorkflowName}` when starting worker or during test execution
+### Issue: Workflow Sandbox Violation (CRITICAL)
 
 **Root Cause**: Workflow imports activity module that contains non-deterministic code (httpx, random, datetime.now(), file I/O, database connections, etc.)
 
@@ -215,35 +185,7 @@ python3 -c "import sys; sys.path.insert(0, '.'); from {project_name}.workflow im
 
 ---
 
-### Issue 3: Incorrect Test Environment API
-
-**Symptom**: `TypeError: 'coroutine' object does not support the asynchronous context manager protocol` or `AttributeError: '_EphemeralServerWorkflowEnvironment' object has no attribute 'create_worker'`
-
-**Root Cause**: Using incorrect pattern for WorkflowEnvironment API
-
-**Example of problematic code**:
-```python
-# ❌ WRONG - This syntax is incorrect
-async with await WorkflowEnvironment.start_time_skipping() as env:
-    async with Worker(env.client, ...):
-        ...
-```
-
-**Solution**:
-```python
-# ✓ CORRECT - Await first, then use the environment
-env = await WorkflowEnvironment.start_time_skipping()
-async with Worker(env.client, task_queue="test-queue", workflows=[...], activities=[...]):
-    result = await env.client.execute_workflow(...)
-```
-
-**Prevention**: Always follow the two-step pattern: await environment creation, then create worker with env.client
-
-**Detection**: Run `uv run pytest test_workflow.py -v` - will fail immediately with TypeError if using wrong pattern
-
----
-
-### Issue 4: Wrong RetryPolicy Import
+### Issue: Wrong RetryPolicy Import
 
 **Symptom**: `AttributeError: module 'temporalio.workflow' has no attribute 'RetryPolicy'`
 
@@ -282,13 +224,10 @@ python3 -m py_compile {project_name}/workflow.py
 
 If your migration is failing, check these in order:
 
-1. ✓ **Dependencies installed**: `uv pip list | grep -E "(temporalio|pytest|pytest-asyncio)"`
+1. ✓ **Dependencies installed**: `uv pip list | grep -E "(temporalio)"`
 2. ✓ **Syntax valid**: `python3 -m py_compile {project_name}/*.py`
 3. ✓ **Sandbox compliance**: `python3 -c 'from {project_name}.workflow import YourWorkflow'`
 4. ✓ **Correct imports**: `grep "from temporalio.common import RetryPolicy" {project_name}/workflow.py`
-5. ✓ **Test pattern**: `grep "env = await WorkflowEnvironment.start_time_skipping()" {project_name}/test_workflow.py`
-6. ✓ **Worker starts**: `uv run worker.py` (should not crash on startup)
-7. ✓ **Tests pass**: `uv run pytest -v`
 
 ---
 
@@ -400,95 +339,12 @@ api_retry = RetryPolicy(
 
 ---
 
-### 5. Extend Testing
-- Add more edge case tests
-- Add performance tests
-- Add chaos engineering tests
-
-**Example edge case test**:
-```python
-@pytest.mark.asyncio
-async def test_workflow_with_empty_input():
-    """Test workflow handles empty input gracefully."""
-    env = await WorkflowEnvironment.start_time_skipping()
-    async with Worker(env.client, task_queue="test", workflows=[MyWorkflow], activities=[...]):
-        with pytest.raises(ValueError, match="Input cannot be empty"):
-            await env.client.execute_workflow(
-                MyWorkflow.run,
-                WorkflowInput(data=""),
-                id="test-empty",
-                task_queue="test"
-            )
-```
-
----
-
-## Reference: Complete Migration Script
-
-For automated migration, use this one-command script template:
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-CONDUCTOR_FILE="$1"
-PROJECT_NAME="${2:-$(basename "$CONDUCTOR_FILE" .json | tr '[:upper:]' '[:lower:]' | tr ' ' '_')}"
-
-echo "Migrating Conductor workflow to Temporal Python..."
-echo "Conductor file: $CONDUCTOR_FILE"
-echo "Project name: $PROJECT_NAME"
-
-# Phase 1: Analyze
-echo "Phase 1: Analyzing Conductor JSON..."
-jq empty "$CONDUCTOR_FILE" || { echo "Invalid JSON"; exit 1; }
-
-# Extract workflow name
-WORKFLOW_NAME=$(jq -r '.name' "$CONDUCTOR_FILE")
-echo "Workflow name: $WORKFLOW_NAME"
-
-# Create analysis file
-cat > conductor-analysis.json <<EOF
-{
-  "analysis_date": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-  "conductor_file": "$CONDUCTOR_FILE",
-  "workflow_metadata": {
-    "name": "$WORKFLOW_NAME",
-    "version": $(jq '.version // 1' "$CONDUCTOR_FILE"),
-    "description": $(jq '.description // ""' "$CONDUCTOR_FILE")
-  },
-  "project_config": {
-    "project_name": "$PROJECT_NAME",
-    "task_queue": "${PROJECT_NAME}-task-queue"
-  }
-}
-EOF
-
-echo "✓ Analysis complete: conductor-analysis.json"
-
-# Phase 2-10: Execute migration phases
-# [Implementation based on detailed phase instructions in migration guide]
-
-echo ""
-echo "Migration complete! Project created at: $PROJECT_NAME"
-echo ""
-echo "Next steps:"
-echo "1. cd $PROJECT_NAME"
-echo "2. ./setup.sh"
-echo "3. temporal server start-dev  # In separate terminal"
-echo "4. uv run worker.py            # In separate terminal"
-echo "5. uv run starter.py"
-```
-
-**Note**: This is a template. See the [Migration Guide](./conductor-migration-guide.md) for detailed implementation of each phase.
-
----
-
 ## Getting Additional Help
 
 ### Documentation Resources
 - **[Migration Guide](./conductor-migration-guide.md)**: Detailed phase-by-phase instructions
 - **[Architecture Guide](./conductor-architecture.md)**: Conductor vs Temporal concepts
-- **[Quality Assurance](./conductor-quality-assurance.md)**: Testing and validation standards
+- **[Quality Assurance](./conductor-quality-assurance.md)**: Validation standards
 - **Temporal Documentation**: https://docs.temporal.io/
 - **Temporal Python SDK**: https://github.com/temporalio/sdk-python
 - **Temporal Samples**: https://github.com/temporalio/samples-python
@@ -502,46 +358,6 @@ echo "5. uv run starter.py"
 ### Professional Support
 - **Temporal Cloud Support**: For Temporal Cloud customers
 - **Enterprise Support**: Contact Temporal for enterprise support options
-
-### Debugging Tips
-
-1. **Enable Debug Logging**
-   ```python
-   import logging
-   logging.basicConfig(level=logging.DEBUG)
-   ```
-
-2. **Use Temporal CLI for Workflow Inspection**
-   ```bash
-   # Show workflow execution details
-   temporal workflow show --workflow-id <id>
-
-   # Show workflow history (all events)
-   temporal workflow show --workflow-id <id> --output json | jq '.events'
-
-   # Describe workflow execution
-   temporal workflow describe --workflow-id <id>
-   ```
-
-3. **Check Worker Health**
-   ```bash
-   # View worker logs
-   tail -f worker.log
-
-   # Check if worker is running
-   ps aux | grep worker.py
-
-   # Check worker process
-   cat worker.pid
-   ps -p $(cat worker.pid)
-   ```
-
-4. **Validate Workflow Registration**
-   ```python
-   # In Python REPL
-   from {project_name}.workflow import MyWorkflow
-   print(MyWorkflow.run)  # Should show workflow.run method
-   ```
 
 ---
 

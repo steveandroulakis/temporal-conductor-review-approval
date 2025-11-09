@@ -7,14 +7,12 @@ This guide provides comprehensive instructions for migrating Netflix Conductor J
 **Use this guide when:**
 - You have a Conductor JSON workflow definition file
 - You want to migrate from Conductor's declarative JSON DSL to Temporal's code-first Python approach
-- You need a complete, tested, and documented Temporal project as output
+- You need a complete documented Temporal project as output
 
 **What this migration produces:**
 - Complete Python project with workflows, activities, and worker
-- Comprehensive unit and integration tests
 - Type-safe code with mypy strict validation
 - Full documentation and setup instructions
-- End-to-end validated working implementation
 
 ---
 
@@ -22,13 +20,13 @@ This guide provides comprehensive instructions for migrating Netflix Conductor J
 
 For experienced users who understand both Conductor and Temporal:
 
-1. **Ensure prerequisites**: Python 3.11+, Temporal CLI, UV, jq
+1. **Ensure prerequisites**: Python 3.11+, UV, jq
 2. **Validate Conductor JSON**: `jq empty workflow.json`
 3. **⚠️ CRITICAL - Before writing code**: Cross-reference your Conductor JSON with [Primitives Reference](./conductor-primitives-reference.md). If HUMAN_TASK/WAIT/approvals exist, read [Human Interaction Patterns](./conductor-human-interaction.md)
-4. **Follow migration phases**: Analyze → Generate → Validate → Test
+4. **Follow migration phases**: Analyze → Generate → Validate
 5. **Key mappings**: SIMPLE→Activity, FORK_JOIN→asyncio.gather, SWITCH→if/elif, DO_WHILE→while, HUMAN_TASK→Update/Signal
 6. **Run end-to-end**: Start dev server → Start worker → Execute workflow → Validate
-7. **Success criteria**: All tests pass, mypy strict passes, workflow executes successfully
+7. **Success criteria**: mypy strict passes, workflow executes successfully
 
 ---
 
@@ -66,13 +64,11 @@ For experienced users who understand both Conductor and Temporal:
 2. Determine whether to use Signals (fire-and-forget) or Updates (request-response)
 3. Implement proper timeout handling for human responses
 4. Follow the documented patterns for approval workflows, multiple reviewers, or approval loops
-5. Write comprehensive tests for human interaction scenarios
 
 **Why this matters:**
 - Human interaction patterns are NOT straightforward task-to-activity mappings
 - Signals and Updates have different semantics and use cases
 - Incorrect implementation can lead to workflows that hang indefinitely or fail validation
-- Proper testing of human interaction requires specific testing patterns
 
 ---
 
@@ -108,8 +104,7 @@ Complete, phase-by-phase instructions for migrating a Conductor workflow to Temp
 - **Prerequisites**: Required tools and setup
 - **Phase 1: Analysis & Setup**: Parse Conductor JSON and create project structure
 - **Phase 2: Code Generation**: Generate activities, workflows, worker, and starter
-- **Phase 3: Testing**: Create comprehensive test suite and validate code
-- **Phase 4: Deployment**: End-to-end testing and documentation
+- **Phase 3: Deployment**: Documentation
 
 **Use this when:**
 - You're actively performing a migration
@@ -119,20 +114,18 @@ Complete, phase-by-phase instructions for migrating a Conductor workflow to Temp
 ---
 
 ### ✅ [Quality Assurance](./conductor-quality-assurance.md)
-**Testing, Validation, and Success Criteria**
+**Validation, and Success Criteria**
 
 Standards and procedures for ensuring your migration meets production-quality requirements.
 
 **Topics covered:**
-- Validation procedures (syntax, type checking, tests)
+- Validation procedures (syntax, type checking)
 - Migration success criteria and quality gates
 - Code quality standards and best practices
-- Testing standards (activity tests, workflow tests, integration tests)
 - Performance standards and documentation requirements
 
 **Use this when:**
 - You need to verify your migration meets quality standards
-- You're defining test coverage requirements
 - You want to establish quality gates for your project
 
 ---
@@ -145,9 +138,7 @@ Comprehensive troubleshooting reference with solutions from real migrations.
 **Topics covered:**
 - Common migration issues (JSON parsing, timeouts, type errors, etc.)
 - **Critical documented pitfalls** with tested solutions:
-  - Test dependency not found
   - Workflow sandbox violations (CRITICAL)
-  - Incorrect test environment API
   - Wrong RetryPolicy import
 - Quick diagnostic checklist
 - Next steps after migration
@@ -155,7 +146,7 @@ Comprehensive troubleshooting reference with solutions from real migrations.
 
 **Use this when:**
 - Your migration is failing and you need to diagnose the issue
-- You encounter workflow sandbox violations or test failures
+- You encounter workflow sandbox violations
 - You want to avoid common pitfalls encountered in real migrations
 - You need guidance on production readiness and optimization
 
@@ -183,92 +174,12 @@ Comprehensive troubleshooting reference with solutions from real migrations.
 
 ---
 
-## Migration Overview
-
-```
-┌─────────────────────┐
-│  Conductor JSON     │
-│  workflow.json      │
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐
-│  Phase 1: Analysis  │
-│  Parse & Understand │
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐
-│  Phase 2: Generate  │
-│  Activities,        │
-│  Workflow, Worker   │
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐
-│  Phase 3: Testing   │
-│  Unit & Integration │
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐
-│  Phase 4: Deploy    │
-│  E2E Test & Docs    │
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐
-│  Production-Ready   │
-│  Temporal Project   │
-└─────────────────────┘
-```
-
----
-
-## Key Migration Concepts
-
-### Architectural Shift
-**Conductor**: Declarative JSON DSL with external state management
-**Temporal**: Imperative Python code with automatic event sourcing
-
-### Control Flow Translation
-- **SIMPLE** → Activity function with `@activity.defn`
-- **FORK_JOIN** → `asyncio.gather()` for parallel execution
-- **SWITCH** → Python `if/elif/else` statements
-- **DO_WHILE** → Python `while` loop
-- **HTTP** → Activity with httpx client
-
-### Data Passing
-- `${workflow.input.field}` → `input.field`
-- `${task_ref.output}` → `result_variable`
-- JSONPath expressions → Python object access
-
-### Key Differences at a Glance
-
-| Aspect | Conductor | Temporal Python |
-|--------|-----------|-----------------|
-| **Definition Style** | JSON DSL | Native Python code |
-| **Type Safety** | None (runtime JSON) | Full (MyPy, type hints) |
-| **Control Flow** | Operators (SWITCH, FORK, DO_WHILE) | Python constructs (if, for, async) |
-| **Data Passing** | JSONPath templates `${task.output.field}` | Direct Python objects |
-| **Durability** | Server-managed state | Transparent workflow history |
-| **Error Handling** | Task definition config | Python try/except + retry policies |
-| **Testing** | Requires server instance | Pure Python unit tests |
-| **IDE Support** | JSON schema validation | Full Python IDE features |
-| **Debugging** | UI-based workflow visualization | Python debugger + UI |
-| **Scheduling** | External tools/plugins | First-class Schedules primitive |
-| **Worker Model** | Polling via HTTP/gRPC | Polling with SDK abstractions |
-
----
-
 ## Success Criteria
 
 Your migration is complete when:
 
 ✅ All Python files pass syntax validation
 ✅ `mypy --strict` passes with no errors
-✅ All unit tests pass
-✅ End-to-end workflow executes successfully
 ✅ Documentation is complete
 ✅ Code follows quality standards
 
