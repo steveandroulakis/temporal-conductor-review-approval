@@ -57,6 +57,7 @@
 
 ```
 _your_app_name_here_/ (or choose an appropriate name)
+  __init__.py        # package marker (can be empty)
   shared.py          # dataclasses and shared types
   activities.py      # activity defs only
   workflow.py        # workflow defs only
@@ -66,7 +67,19 @@ AGENTS.md            # this file
 pyproject.toml
 ```
 
-> **Imports:** Use relative imports inside `_your_app_name_here_` (e.g., `from activities import compose_greeting`). This keeps things executable via `uv run` without extra PYTHONPATH setup.
+> **Imports:** Use relative imports inside `_your_app_name_here_` (e.g., `from .activities import compose_greeting`). This keeps things consistent as a proper Python package.
+
+> **Running scripts:** Since this is a package structure, run scripts using the module syntax:
+> - `uv run python -m _your_app_name_here_.worker`
+> - `uv run python -m _your_app_name_here_.starter`
+>
+> Or add console scripts to `pyproject.toml` (recommended):
+> ```toml
+> [project.scripts]
+> worker = "_your_app_name_here_.worker:main"
+> starter = "_your_app_name_here_.starter:main"
+> ```
+> Then run: `uv run worker` or `uv run starter`
 
 ---
 
@@ -153,6 +166,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["ruff>=0.1.0", "mypy>=1.0.0"]
 
+[project.scripts]
+worker = "_your_app_name_here_.worker:main"
+starter = "_your_app_name_here_.starter:main"
+
 [tool.ruff]
 line-length = 88
 target-version = "py311"
@@ -163,6 +180,8 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 ```
+
+> **Note:** The `[project.scripts]` section creates console commands that can be run with `uv run worker` or `uv run starter`. This is the recommended approach for package-based projects.
 
 ---
 
@@ -242,11 +261,6 @@ class GreetingWorkflow:
 ### 4.4 `worker.py`
 
 ```python
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.11"
-# dependencies = ["temporalio>=1.7.0"]
-# ///
 import asyncio, logging, os
 from concurrent.futures import ThreadPoolExecutor
 from temporalio.client import Client
@@ -254,7 +268,7 @@ from temporalio.worker import Worker
 from activities import compose_greeting
 from workflow import GreetingWorkflow
 
-async def main() -> None:
+async def run_worker() -> None:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
     with open("worker.pid", "w") as f:
@@ -275,23 +289,37 @@ async def main() -> None:
         except KeyboardInterrupt:
             logger.info("Worker shutting down…")
 
+def main() -> None:
+    """Console script entry point."""
+    asyncio.run(run_worker())
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
+```
+
+> **Important:** The `main()` function must be synchronous (not async) to work as a console script entry point. It wraps the async `run_worker()` function with `asyncio.run()`. If `main()` is async, you'll get "coroutine was never awaited" errors when running via console scripts.
+
+**Running the worker:**
+```bash
+# Option 1: Run as module
+uv run python -m _your_app_name_here_.worker
+
+# Option 2: Use console script (best practice)
+# Add to pyproject.toml:
+# [project.scripts]
+# worker = "_your_app_name_here_.worker:main"
+# Then run:
+uv run worker
 ```
 
 ### 4.5 `starter.py`
 
 ```python
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.11"
-# dependencies = ["temporalio>=1.7.0"]
-# ///
 import asyncio, logging, sys
 from temporalio.client import Client
 from workflow import GreetingWorkflow
 
-async def main() -> None:
+async def run_starter() -> None:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
     name = sys.argv[1] if len(sys.argv) > 1 else "World"
@@ -309,8 +337,27 @@ async def main() -> None:
         logger.error(f"Workflow execution failed: {e}")
         raise SystemExit(1)
 
+def main() -> None:
+    """Console script entry point."""
+    asyncio.run(run_starter())
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
+```
+
+> **Important:** The `main()` function must be synchronous (not async) to work as a console script entry point. It wraps the async `run_starter()` function with `asyncio.run()`. If `main()` is async, you'll get "coroutine was never awaited" errors when running via console scripts.
+
+**Running the starter:**
+```bash
+# Option 1: Run as module
+uv run python -m _your_app_name_here_.starter
+
+# Option 2: Use console script (best practice)
+# Add to pyproject.toml:
+# [project.scripts]
+# starter = "_your_app_name_here_.starter:main"
+# Then run:
+uv run starter
 ```
 
 ---
@@ -342,6 +389,39 @@ uv pip list | grep temporalio
 ```
 
 **Prevention**: Always run `uv sync --all-extras` after adding dependencies
+
+---
+
+### Issue: Console Script Async Main Error
+**Symptom**: `RuntimeWarning: coroutine 'main' was never awaited` when running via console scripts (e.g., `uv run worker`)
+
+**Cause**: Console script entry points must be synchronous functions, not async functions.
+
+**Wrong**:
+```python
+async def main() -> None:  # ❌ Async function
+    client = await Client.connect("localhost:7233")
+    # ...
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+**Correct**:
+```python
+async def run_worker() -> None:  # Async implementation
+    client = await Client.connect("localhost:7233")
+    # ...
+
+def main() -> None:  # ✓ Synchronous entry point
+    """Console script entry point."""
+    asyncio.run(run_worker())
+
+if __name__ == "__main__":
+    main()
+```
+
+**Why**: When `pyproject.toml` defines `[project.scripts]` entry points like `worker = "package.worker:main"`, it calls `main()` directly. If `main()` is async, Python returns a coroutine object instead of executing it, causing the warning.
 
 ---
 

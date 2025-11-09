@@ -242,10 +242,16 @@ jq -e '.tasks | length > 0' conductor-analysis.json
        "mypy>=1.7.0",
    ]
 
+   [project.scripts]
+   worker = "{project_name}.worker:main"
+   starter = "{project_name}.starter:main"
+
    [build-system]
    requires = ["setuptools>=68.0"]
    build-backend = "setuptools.build_meta"
    ```
+
+   > **Note:** The `[project.scripts]` section creates console commands. After running `uv sync`, you can run `uv run worker` or `uv run starter` instead of the longer module syntax.
 
 5. **Create .gitignore**
    ```
@@ -544,11 +550,7 @@ python3 -c "import sys; sys.path.insert(0, '.'); from {project_name}.workflow im
 
 1. **Create worker.py**
    ```python
-   #!/usr/bin/env -S uv run --script
-   # /// script
-   # requires-python = ">=3.11"
-   # dependencies = ["temporalio>=1.7.0"]
-   # ///
+   """Worker process that hosts the workflow."""
    import asyncio
    import logging
    import os
@@ -559,7 +561,7 @@ python3 -c "import sys; sys.path.insert(0, '.'); from {project_name}.workflow im
    from .workflow import MyWorkflow
    from . import activities
 
-   async def main() -> None:
+   async def run_worker() -> None:
        """Run Temporal worker."""
        logging.basicConfig(level=logging.INFO)
        logger = logging.getLogger(__name__)
@@ -592,8 +594,23 @@ python3 -c "import sys; sys.path.insert(0, '.'); from {project_name}.workflow im
            except KeyboardInterrupt:
                logger.info("Worker shutting down…")
 
+   def main() -> None:
+       """Console script entry point."""
+       asyncio.run(run_worker())
+
    if __name__ == "__main__":
-       asyncio.run(main())
+       main()
+   ```
+
+   > **Important:** The `main()` function must be synchronous (not async) to work as a console script entry point. It wraps the async function with `asyncio.run()`. If `main()` is async, you'll get "coroutine was never awaited" runtime warnings when running via console scripts.
+
+   **Running the worker:**
+   ```bash
+   # Option 1: Run as module
+   uv run python -m {project_name}.worker
+
+   # Option 2: Use console script (requires [project.scripts] in pyproject.toml)
+   uv run worker
    ```
 
 2. **List all activities** from Phase 3 analysis
@@ -621,11 +638,7 @@ grep -q 'Worker(' {project_name}/worker.py
 
 1. **Create starter.py**
    ```python
-   #!/usr/bin/env -S uv run --script
-   # /// script
-   # requires-python = ">=3.11"
-   # dependencies = ["temporalio>=1.7.0"]
-   # ///
+   """Utility for starting the workflow."""
    import asyncio
    import uuid
    import logging
@@ -635,7 +648,7 @@ grep -q 'Worker(' {project_name}/worker.py
    from .workflow import MyWorkflow
    from .shared import WorkflowInput
 
-   async def main() -> None:
+   async def run_starter() -> None:
        """Start workflow execution."""
        logging.basicConfig(level=logging.INFO)
        logger = logging.getLogger(__name__)
@@ -671,8 +684,23 @@ grep -q 'Worker(' {project_name}/worker.py
        result = await handle.result()
        print(f"Workflow result: {result}")
 
+   def main() -> None:
+       """Console script entry point."""
+       asyncio.run(run_starter())
+
    if __name__ == "__main__":
-       asyncio.run(main())
+       main()
+   ```
+
+   > **Important:** The `main()` function must be synchronous (not async) to work as a console script entry point. It wraps the async function with `asyncio.run()`. If `main()` is async, you'll get "coroutine was never awaited" runtime warnings when running via console scripts.
+
+   **Running the starter:**
+   ```bash
+   # Option 1: Run as module
+   uv run python -m {project_name}.starter
+
+   # Option 2: Use console script (requires [project.scripts] in pyproject.toml)
+   uv run starter
    ```
 
 2. **Generate example input data** based on Conductor input_parameters
@@ -769,8 +797,12 @@ grep -q 'start_workflow(' {project_name}/starter.py
    echo "Setup complete!"
    echo ""
    echo "Next steps:"
-   echo "1. Start worker: uv run worker.py"
-   echo "2. Execute workflow: uv run starter.py"
+   echo "1. Start worker: uv run python -m {project_name}.worker"
+   echo "2. Execute workflow: uv run python -m {project_name}.starter"
+   echo ""
+   echo "Or if you added [project.scripts] to pyproject.toml:"
+   echo "1. Start worker: uv run worker"
+   echo "2. Execute workflow: uv run starter"
    ```
 
 5. **Make executable**
@@ -831,12 +863,14 @@ test -x setup.sh
 
    1. Start the worker (in separate terminal):
       ```bash
-      uv run worker.py
+      uv run python -m {project_name}.worker
+      # Or: uv run worker (if using [project.scripts])
       ```
 
    2. Execute the workflow:
       ```bash
-      uv run starter.py
+      uv run python -m {project_name}.starter
+      # Or: uv run starter (if using [project.scripts])
       ```
 
    3. View workflow in Temporal Web UI:

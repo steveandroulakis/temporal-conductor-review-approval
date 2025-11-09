@@ -220,6 +220,55 @@ python3 -m py_compile {project_name}/workflow.py
 
 ---
 
+### Issue: Console Script Async Main Error
+
+**Symptom**: `RuntimeWarning: coroutine 'main' was never awaited` when running via console scripts (e.g., `uv run worker`)
+
+**Root Cause**: Console script entry points in `[project.scripts]` must be synchronous functions, not async functions.
+
+**Example of problematic code**:
+```python
+# ❌ WRONG - Async main function
+async def main() -> None:
+    client = await Client.connect("localhost:7233")
+    worker = Worker(client, task_queue="my-queue", ...)
+    await worker.run()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+**Solution**:
+```python
+# ✓ CORRECT - Synchronous main wrapping async function
+async def run_worker() -> None:
+    client = await Client.connect("localhost:7233")
+    worker = Worker(client, task_queue="my-queue", ...)
+    await worker.run()
+
+def main() -> None:
+    """Console script entry point."""
+    asyncio.run(run_worker())
+
+if __name__ == "__main__":
+    main()
+```
+
+**Prevention**:
+- Always make the `main()` function synchronous when using `[project.scripts]`
+- Name your async implementation function something else (e.g., `run_worker()`, `run_starter()`)
+- Have `main()` call `asyncio.run(async_function())`
+
+**Why this happens**: When `pyproject.toml` defines entry points like `worker = "package.worker:main"`, Python calls `main()` directly as a regular function. If `main()` is async, Python returns a coroutine object instead of executing it, resulting in the "never awaited" warning.
+
+**Detection**: Test your console scripts after defining them:
+```bash
+uv run worker  # Should run without warnings
+uv run starter  # Should run without warnings
+```
+
+---
+
 ## Quick Diagnostic Checklist
 
 If your migration is failing, check these in order:
