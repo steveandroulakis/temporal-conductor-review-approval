@@ -24,10 +24,55 @@ For experienced users who understand both Conductor and Temporal:
 
 1. **Ensure prerequisites**: Python 3.11+, Temporal CLI, UV, jq
 2. **Validate Conductor JSON**: `jq empty workflow.json`
-3. **Follow migration phases**: Analyze → Generate → Validate → Test
-4. **Key mappings**: SIMPLE→Activity, FORK_JOIN→asyncio.gather, SWITCH→if/elif, DO_WHILE→while, HUMAN_TASK→Update/Signal
-5. **Run end-to-end**: Start dev server → Start worker → Execute workflow → Validate
-6. **Success criteria**: All tests pass, mypy strict passes, workflow executes successfully
+3. **⚠️ CRITICAL - Before writing code**: Cross-reference your Conductor JSON with [Primitives Reference](./conductor-primitives-reference.md). If HUMAN_TASK/WAIT/approvals exist, read [Human Interaction Patterns](./conductor-human-interaction.md)
+4. **Follow migration phases**: Analyze → Generate → Validate → Test
+5. **Key mappings**: SIMPLE→Activity, FORK_JOIN→asyncio.gather, SWITCH→if/elif, DO_WHILE→while, HUMAN_TASK→Update/Signal
+6. **Run end-to-end**: Start dev server → Start worker → Execute workflow → Validate
+7. **Success criteria**: All tests pass, mypy strict passes, workflow executes successfully
+
+---
+
+## ⚠️ Critical Migration Requirements
+
+**BEFORE writing any Temporal workflow code, you MUST:**
+
+### 1. Examine Your Conductor JSON Against the Primitives Reference
+
+**Every Conductor task type has specific Temporal mappings.** You must cross-reference your Conductor JSON workflow definition with the [Primitives Reference](./conductor-primitives-reference.md) to ensure correct translation.
+
+**Required actions:**
+- Identify each task type in your Conductor JSON (`SIMPLE`, `FORK_JOIN`, `SWITCH`, `DO_WHILE`, `HTTP`, `WAIT`, `HUMAN_TASK`, etc.)
+- Look up each task type in [conductor-primitives-reference.md](./conductor-primitives-reference.md)
+- Follow the documented Temporal pattern for each primitive
+- Pay special attention to configuration details (retry policies, timeouts, loop conditions, etc.)
+
+**Example:** If your Conductor JSON has a `DO_WHILE` task, you MUST read the "While Loops" section in the primitives reference to understand:
+- How `loopCondition` translates to Python while logic
+- When to use `continue-as-new` for long-running loops
+- How iteration counters map from `${taskRef.output.iteration}` to Python variables
+
+### 2. Identify and Implement Human-in-the-Loop Patterns
+
+**If your workflow has human interaction, you MUST read the Human Interaction guide.**
+
+**Check your Conductor JSON for these patterns:**
+- `HUMAN_TASK` task types
+- `WAIT` tasks waiting for external events
+- DO_WHILE loops checking for approval status
+- References like `${user_action.output.approved}` or `${reviewer.output.decision}`
+
+**If ANY of these exist, you MUST:**
+1. Read [conductor-human-interaction.md](./conductor-human-interaction.md) completely
+2. Determine whether to use Signals (fire-and-forget) or Updates (request-response)
+3. Implement proper timeout handling for human responses
+4. Follow the documented patterns for approval workflows, multiple reviewers, or approval loops
+5. Write comprehensive tests for human interaction scenarios
+
+**Why this matters:**
+- Human interaction patterns are NOT straightforward task-to-activity mappings
+- Signals and Updates have different semantics and use cases
+- Incorrect implementation can lead to workflows that hang indefinitely or fail validation
+- Proper testing of human interaction requires specific testing patterns
 
 ---
 
@@ -121,15 +166,20 @@ Comprehensive troubleshooting reference with solutions from real migrations.
 ### First-Time Users
 1. Start with the [Architecture Reference](./conductor-architecture.md) to understand the conceptual differences
 2. Review prerequisites in the [Migration Guide](./conductor-migration-guide.md)
-3. Follow the phase-by-phase instructions in the [Migration Guide](./conductor-migration-guide.md)
-4. Use the [Quality Assurance](./conductor-quality-assurance.md) checklist to verify your migration
-5. Refer to [Troubleshooting](./conductor-troubleshooting.md) if you encounter issues
+3. **CRITICAL:** Before writing code, examine your Conductor JSON:
+   - Cross-reference each task type with [Primitives Reference](./conductor-primitives-reference.md)
+   - Check for human interaction patterns (HUMAN_TASK, WAIT, approval loops)
+   - If human interaction exists, read [Human Interaction Patterns](./conductor-human-interaction.md)
+4. Follow the phase-by-phase instructions in the [Migration Guide](./conductor-migration-guide.md)
+5. Use the [Quality Assurance](./conductor-quality-assurance.md) checklist to verify your migration
+6. Refer to [Troubleshooting](./conductor-troubleshooting.md) if you encounter issues
 
 ### Experienced Users
 1. Validate your Conductor JSON: `jq empty workflow.json`
-2. Jump directly to [Migration Guide](./conductor-migration-guide.md) Phase 1
-3. Use [Troubleshooting](./conductor-troubleshooting.md) Quick Diagnostic Checklist if issues arise
-4. Verify completion with [Quality Assurance](./conductor-quality-assurance.md) checklist
+2. **CRITICAL:** Examine your Conductor JSON against [Primitives Reference](./conductor-primitives-reference.md) and [Human Interaction Patterns](./conductor-human-interaction.md)
+3. Jump directly to [Migration Guide](./conductor-migration-guide.md) Phase 1
+4. Use [Troubleshooting](./conductor-troubleshooting.md) Quick Diagnostic Checklist if issues arise
+5. Verify completion with [Quality Assurance](./conductor-quality-assurance.md) checklist
 
 ---
 
