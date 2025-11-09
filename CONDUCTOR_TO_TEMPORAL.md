@@ -404,7 +404,7 @@ jq -e '.tasks | length > 0' conductor-analysis.json
    [project.optional-dependencies]
    dev = [
        "pytest>=7.4.0",
-       "pytest-asyncio>=0.21.0",
+       "pytest-asyncio>=0.21.0",  # Required for async test support
        "mypy>=1.7.0",
    ]
 
@@ -558,17 +558,29 @@ grep -q '@activity.defn' {project_name}/activities.py
 ### Tasks
 
 1. **Create workflow.py**
+
+   > ⚠️ **CRITICAL: WORKFLOW SANDBOX VIOLATION WARNING**
+   >
+   > **DO NOT** import activity modules that contain non-deterministic code (httpx, random, datetime.now(), file I/O, database connections, etc.).
+   >
+   > **ONLY import specific activity functions by name**. If your `activities.py` imports external libraries like httpx, boto3, or any I/O libraries, importing the entire module (`from . import activities`) will violate the workflow sandbox and cause validation errors at runtime.
+   >
+   > **Correct pattern**: `from .activities import activity1, activity2, activity3`
+   > **Incorrect pattern**: `from . import activities` ❌ (if activities.py has non-deterministic imports)
+
    ```python
    import asyncio
    from datetime import timedelta
    from dataclasses import dataclass
    from typing import Optional, List, Dict, Any
    from temporalio import workflow
-   from temporalio.common import RetryPolicy
+   from temporalio.common import RetryPolicy  # NOTE: Import from .common, NOT .workflow
 
    with workflow.unsafe.imports_passed_through():
        from .shared import WorkflowInput, WorkflowOutput
-       from . import activities
+       # Import specific activity functions, NOT the entire module
+       # Replace with actual activity function names from your activities.py
+       from .activities import simple_task_activity, http_task_activity
 
    @workflow.defn
    class MyWorkflow:
@@ -620,9 +632,28 @@ grep -q '@activity.defn' {project_name}/activities.py
    ```
 
 4. **Configure activity execution**
+
+   Since you imported specific activity functions (not the module), reference them directly:
    ```python
+   # Using imported activity function directly
    result = await workflow.execute_activity(
-       activities.my_activity,
+       simple_task_activity,  # Function imported at top of file
+       args=[input.param],
+       start_to_close_timeout=timedelta(seconds=300),
+       retry_policy=RetryPolicy(
+           maximum_attempts=3,
+           initial_interval=timedelta(seconds=10),
+           backoff_coefficient=2.0,
+           maximum_interval=timedelta(seconds=100)
+       )
+   )
+   ```
+
+   Alternatively, use string names (more flexible but less type-safe):
+   ```python
+   # Using string name
+   result = await workflow.execute_activity(
+       "simple_task_activity",
        args=[input.param],
        start_to_close_timeout=timedelta(seconds=300),
        retry_policy=RetryPolicy(
@@ -645,6 +676,12 @@ test -f {project_name}/workflow.py
 python3 -m py_compile {project_name}/workflow.py
 grep -q '@workflow.defn' {project_name}/workflow.py
 grep -q '@workflow.run' {project_name}/workflow.py
+
+# CRITICAL: Verify workflow sandbox compliance (detects import violations)
+python3 -c "import sys; sys.path.insert(0, '.'); from {project_name}.workflow import MyWorkflow; print('✓ Workflow sandbox compliance verified')" || {
+    echo "❌ Workflow sandbox violation detected! Check imports in workflow.py"
+    exit 1
+}
 ```
 
 ### Common Issues
@@ -848,6 +885,14 @@ grep -q 'start_workflow(' {project_name}/starter.py
    ```
 
 2. **Create test_workflow.py**
+
+   > ⚠️ **CRITICAL: CORRECT TEST ENVIRONMENT API USAGE**
+   >
+   > The `WorkflowEnvironment.start_time_skipping()` method returns a coroutine that must be **awaited first**, then the worker is created with the environment's client.
+   >
+   > **Incorrect pattern**: `async with await WorkflowEnvironment.start_time_skipping() as env:` ❌
+   > **Correct pattern**: First await, then use the env object ✓
+
    ```python
    import pytest
    from temporalio.testing import WorkflowEnvironment
@@ -855,32 +900,36 @@ grep -q 'start_workflow(' {project_name}/starter.py
 
    from .workflow import MyWorkflow
    from .shared import WorkflowInput
-   from . import activities
+   # Import specific activity functions (same as in workflow.py)
+   from .activities import simple_task_activity, http_task_activity
 
    @pytest.mark.asyncio
    async def test_workflow_happy_path():
        """Test workflow with valid input."""
-       async with await WorkflowEnvironment.start_time_skipping() as env:
-           async with Worker(
-               env.client,
-               task_queue="test-queue",
-               workflows=[MyWorkflow],
-               activities=[activities.activity1, activities.activity2]
-           ):
-               workflow_input = WorkflowInput(
-                   param1="test_value",
-                   param2=123
-               )
+       # CORRECT: Await the environment creation first
+       env = await WorkflowEnvironment.start_time_skipping()
 
-               result = await env.client.execute_workflow(
-                   MyWorkflow.run,
-                   workflow_input,
-                   id="test-workflow-id",
-                   task_queue="test-queue"
-               )
+       # Then create worker with the environment's client
+       async with Worker(
+           env.client,
+           task_queue="test-queue",
+           workflows=[MyWorkflow],
+           activities=[simple_task_activity, http_task_activity]
+       ):
+           workflow_input = WorkflowInput(
+               param1="test_value",
+               param2=123
+           )
 
-               assert result is not None
-               # Add specific assertions
+           result = await env.client.execute_workflow(
+               MyWorkflow.run,
+               workflow_input,
+               id="test-workflow-id",
+               task_queue="test-queue"
+           )
+
+           assert result is not None
+           # Add specific assertions
 
    @pytest.mark.asyncio
    async def test_workflow_conditional_branch():
@@ -899,6 +948,12 @@ grep -q 'start_workflow(' {project_name}/starter.py
 test -f {project_name}/test_activities.py
 test -f {project_name}/test_workflow.py
 python3 -m py_compile {project_name}/test_*.py
+
+# Verify test imports and basic structure
+python3 -c "import sys; sys.path.insert(0, '.'); from {project_name}.test_workflow import test_workflow_happy_path; print('✓ Test imports verified')" || {
+    echo "❌ Test import errors detected! Check test file imports"
+    exit 1
+}
 ```
 
 </details>
@@ -921,6 +976,15 @@ python3 -m py_compile {project_name}/test_*.py
    uv venv
    uv add temporalio httpx
    uv add --dev pytest pytest-asyncio mypy
+
+   # CRITICAL: Sync all dependencies including dev extras
+   uv sync --all-extras
+
+   # Verify all required packages are installed
+   uv pip list | grep -E "(temporalio|pytest|pytest-asyncio|mypy)" || {
+       echo "❌ Missing required dependencies"
+       exit 1
+   }
    ```
 
 2. **Run syntax validation**
@@ -964,6 +1028,17 @@ python3 -m py_compile {project_name}/test_*.py
    uv venv
    uv add temporalio httpx
    uv add --dev pytest pytest-asyncio mypy
+
+   # Sync all dependencies including dev extras
+   echo "Syncing all dependencies..."
+   uv sync --all-extras
+
+   # Verify dependencies installed
+   echo "Verifying dependencies..."
+   uv pip list | grep -E "(temporalio|pytest|pytest-asyncio|mypy)" || {
+       echo "Error: Required dependencies missing"
+       exit 1
+   }
 
    # Run tests
    echo "Running tests..."
@@ -1351,6 +1426,141 @@ open http://localhost:8233
 - Use `temporal workflow show` to see progress
 - Look for bugs in workflow logic (infinite loops, missing signals)
 - Check if activities are registered correctly
+
+---
+
+## Common Migration Pitfalls (Documented from Real Issues)
+
+These issues were encountered during actual migrations and have specific, tested solutions:
+
+### Issue 1: Test Dependency Not Found
+**Symptom**: `ModuleNotFoundError: No module named 'temporalio'` or `ModuleNotFoundError: No module named 'pytest_asyncio'` when running pytest
+
+**Root Cause**: Dev dependencies not fully installed or synced
+
+**Solution**:
+```bash
+# Always sync all extras after installing dependencies
+uv sync --all-extras
+
+# Verify all required packages are present
+uv pip list | grep -E "(temporalio|pytest|pytest-asyncio|mypy)"
+```
+
+**Prevention**: Always run `uv sync --all-extras` after modifying pyproject.toml or before running tests
+
+**Detection**: Run `uv pip list` and check for all required packages
+
+---
+
+### Issue 2: Workflow Sandbox Violation (CRITICAL)
+**Symptom**: `RuntimeError: Failed validating workflow {WorkflowName}` when starting worker or during test execution
+
+**Root Cause**: Workflow imports activity module that contains non-deterministic code (httpx, random, datetime.now(), file I/O, database connections, etc.)
+
+**Example of problematic code**:
+```python
+# ❌ WRONG - This will fail if activities.py imports httpx
+with workflow.unsafe.imports_passed_through():
+    from . import activities
+```
+
+**Solution**:
+```python
+# ✓ CORRECT - Import specific activity functions only
+with workflow.unsafe.imports_passed_through():
+    from .activities import activity1, activity2, activity3
+```
+
+**Prevention**:
+- NEVER use `from . import activities` when activities.py imports I/O libraries
+- ALWAYS import specific activity function names
+- Review activities.py imports before importing in workflow.py
+
+**Detection**:
+```bash
+# This will catch sandbox violations early
+python3 -c "import sys; sys.path.insert(0, '.'); from {project_name}.workflow import YourWorkflow; print('Sandbox OK')"
+```
+
+**Why this happens**: The Temporal workflow sandbox enforces deterministic execution. When you import an activity module that contains non-deterministic code (like httpx), those imports are evaluated at module load time and violate the sandbox rules, even if you're not using that code in the workflow.
+
+---
+
+### Issue 3: Incorrect Test Environment API
+**Symptom**: `TypeError: 'coroutine' object does not support the asynchronous context manager protocol` or `AttributeError: '_EphemeralServerWorkflowEnvironment' object has no attribute 'create_worker'`
+
+**Root Cause**: Using incorrect pattern for WorkflowEnvironment API
+
+**Example of problematic code**:
+```python
+# ❌ WRONG - This syntax is incorrect
+async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with Worker(env.client, ...):
+        ...
+```
+
+**Solution**:
+```python
+# ✓ CORRECT - Await first, then use the environment
+env = await WorkflowEnvironment.start_time_skipping()
+async with Worker(env.client, task_queue="test-queue", workflows=[...], activities=[...]):
+    result = await env.client.execute_workflow(...)
+```
+
+**Prevention**: Always follow the two-step pattern: await environment creation, then create worker with env.client
+
+**Detection**: Run `uv run pytest test_workflow.py -v` - will fail immediately with TypeError if using wrong pattern
+
+---
+
+### Issue 4: Wrong RetryPolicy Import
+**Symptom**: `AttributeError: module 'temporalio.workflow' has no attribute 'RetryPolicy'`
+
+**Root Cause**: Importing RetryPolicy from wrong module
+
+**Example of problematic code**:
+```python
+# ❌ WRONG
+from temporalio import workflow
+retry_policy = workflow.RetryPolicy(...)  # RetryPolicy doesn't exist in workflow module
+```
+
+**Solution**:
+```python
+# ✓ CORRECT
+from temporalio.common import RetryPolicy
+
+# Then use it in workflow
+retry_policy = RetryPolicy(
+    maximum_attempts=3,
+    initial_interval=timedelta(seconds=10),
+    backoff_coefficient=2.0
+)
+```
+
+**Prevention**: Always import RetryPolicy from `temporalio.common`, NOT from `temporalio.workflow`
+
+**Detection**: Syntax check will catch this:
+```bash
+python3 -m py_compile {project_name}/workflow.py
+```
+
+---
+
+### Quick Diagnostic Checklist
+
+If your migration is failing, check these in order:
+
+1. ✓ **Dependencies installed**: `uv pip list | grep -E "(temporalio|pytest|pytest-asyncio)"`
+2. ✓ **Syntax valid**: `python3 -m py_compile {project_name}/*.py`
+3. ✓ **Sandbox compliance**: `python3 -c 'from {project_name}.workflow import YourWorkflow'`
+4. ✓ **Correct imports**: `grep "from temporalio.common import RetryPolicy" {project_name}/workflow.py`
+5. ✓ **Test pattern**: `grep "env = await WorkflowEnvironment.start_time_skipping()" {project_name}/test_workflow.py`
+6. ✓ **Worker starts**: `uv run worker.py` (should not crash on startup)
+7. ✓ **Tests pass**: `uv run pytest -v`
+
+---
 
 ### Getting Additional Help
 
