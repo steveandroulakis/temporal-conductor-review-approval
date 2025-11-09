@@ -52,7 +52,11 @@ _your_app_name_here_/ (or choose an appropriate name)
   workflow.py        # workflow defs only
   worker.py          # long‑running worker (PID + logging)
   starter.py         # workflow starter client (timeouts + exit codes)
+tests/
+  __init__.py
+  test_workflow.py   # automated workflow tests (see §7)
 AGENTS.md            # this file
+pyproject.toml
 ```
 
 > **Imports:** Use relative imports inside `_your_app_name_here_` (e.g., `from activities import compose_greeting`). This keeps things executable via `uv run` without extra PYTHONPATH setup.
@@ -608,7 +612,214 @@ PY
 
 ---
 
-## 7) Development Loop
+## 7) Testing Workflows
+
+> 🎯 **Core Principle**: Focus on **integration tests** that run real workflows with mock activities. This approach is the most effective way to find critical bugs in workflow logic.
+
+### Why Write Tests?
+
+The end-to-end execution from Section 4 validates that your workflow *can* run, but automated tests ensure:
+- **Workflow logic** (branching, loops, error handling) works correctly
+- **State management** (signals, queries) behaves as expected
+- **Edge cases** are handled properly
+- **Regression prevention** when making changes
+
+### 7.1 The Time-Skipping Test Environment
+
+**Problem**: Workflows often wait (using `workflow.sleep`, `workflow.wait_condition`, or timers). If your test runs in real-time, it will hang or timeout.
+
+**Solution**: Use `WorkflowEnvironment.start_time_skipping()` to fast-forward time. Workflows that should run for days complete in seconds.
+
+```python
+from temporalio.testing import WorkflowEnvironment
+
+async def test_my_workflow():
+    # This environment fast-forwards all workflow-level time
+    env = await WorkflowEnvironment.start_time_skipping()
+    # ... your test logic ...
+    await env.shutdown()
+```
+
+> ⚠️ **Common Mistake**: Do NOT use `async with await` on `start_time_skipping()`. See §9.1 for the correct pattern.
+
+### 7.2 Mock Your Activities
+
+**Problem**: If you use real activities, tests might fail due to external issues (network, databases) unrelated to workflow logic.
+
+**Solution**: Create mock implementations of your activities. Simply make a function with the same name and signature, decorate with `@activity.defn`, and pass to the `Worker`.
+
+```python
+from temporalio import activity
+
+# Your real activity (in activities.py)
+@activity.defn(name="upload_schema")
+async def upload_schema(input: SchemaInput) -> UploadResult:
+    # Real implementation that hits external API
+    ...
+
+# Mock for testing (in test_workflow.py)
+@activity.defn(name="upload_schema")
+async def upload_schema_mock(input: SchemaInput) -> UploadResult:
+    # Return fake result instantly
+    return UploadResult(success=True, message="Mocked upload")
+```
+
+### 7.3 Configure Pytest for Module Imports
+
+**Problem**: `ModuleNotFoundError` when running tests - pytest can't find your workflow module.
+
+**Solution**: Add `pythonpath` to your `pyproject.toml`:
+
+```toml
+[tool.pytest.ini_options]
+pythonpath = [
+    ".",
+]
+```
+
+### 7.4 Complete Test Example
+
+Here's a full integration test following best practices:
+
+**File: `tests/test_greeting_workflow.py`**
+
+```python
+import pytest
+from temporalio import activity
+from temporalio.client import Client
+from temporalio.testing import WorkflowEnvironment
+from temporalio.worker import Worker
+from workflow import GreetingWorkflow
+from shared import ComposeGreetingInput
+
+# Mock activity
+@activity.defn(name="compose_greeting")
+async def compose_greeting_mock(input: ComposeGreetingInput) -> str:
+    # Return predictable result for testing
+    return f"{input.greeting}, {input.name}!"
+
+@pytest.mark.asyncio
+async def test_greeting_workflow_basic():
+    """Test basic workflow execution with default greeting"""
+    # Create time-skipping environment
+    env = await WorkflowEnvironment.start_time_skipping()
+
+    try:
+        # Start worker with workflow and mock activities
+        async with Worker(
+            env.client,
+            task_queue="test-task-queue",
+            workflows=[GreetingWorkflow],
+            activities=[compose_greeting_mock],
+        ):
+            # Execute workflow
+            result = await env.client.execute_workflow(
+                GreetingWorkflow.run,
+                "TestUser",
+                id="test-workflow-basic",
+                task_queue="test-task-queue",
+            )
+
+            # Assert expected result
+            assert result == "Hello, TestUser!"
+    finally:
+        await env.shutdown()
+
+@pytest.mark.asyncio
+async def test_greeting_workflow_with_signal():
+    """Test workflow signal updates greeting"""
+    env = await WorkflowEnvironment.start_time_skipping()
+
+    try:
+        async with Worker(
+            env.client,
+            task_queue="test-task-queue",
+            workflows=[GreetingWorkflow],
+            activities=[compose_greeting_mock],
+        ):
+            # Start workflow without waiting for completion
+            handle = await env.client.start_workflow(
+                GreetingWorkflow.run,
+                "TestUser",
+                id="test-workflow-signal",
+                task_queue="test-task-queue",
+            )
+
+            # Send signal to update greeting
+            await handle.signal("update_greeting", "Howdy")
+
+            # Query current greeting
+            current = await handle.query("current_greeting")
+            assert current == "Howdy"
+
+            # Complete workflow
+            result = await handle.result()
+            assert result == "Howdy, TestUser!"
+    finally:
+        await env.shutdown()
+```
+
+### 7.5 Running Tests
+
+```bash
+# Ensure dependencies are synced
+uv sync --all-extras
+
+# Run all tests with verbose output
+uv run pytest -v
+
+# Run specific test
+uv run pytest tests/test_greeting_workflow.py::test_greeting_workflow_basic -v
+
+# Run with coverage
+uv run pytest --cov=your_app_name --cov-report=html
+```
+
+### 7.6 Test File Layout
+
+Add a `tests/` directory to your project:
+
+```
+_your_app_name_here_/
+  shared.py
+  activities.py
+  workflow.py
+  worker.py
+  starter.py
+tests/
+  __init__.py
+  test_workflow.py
+  test_activities.py (optional - for activity unit tests)
+AGENTS.md
+pyproject.toml
+```
+
+### 7.7 What to Test
+
+**Essential tests for every workflow:**
+1. **Happy path**: Basic execution with expected inputs
+2. **Signal handling**: If workflow uses signals, test state changes
+3. **Query handling**: If workflow exposes queries, verify responses
+4. **Error handling**: Test how workflow handles activity failures
+5. **Edge cases**: Empty inputs, boundary conditions, etc.
+
+**Example test checklist for a review approval workflow:**
+- ✅ Workflow completes when approved
+- ✅ Workflow waits correctly for approval signal
+- ✅ Workflow handles rejection signal
+- ✅ Workflow times out after configured duration
+- ✅ Query returns correct approval status
+
+### 7.8 Common Testing Pitfalls
+
+See **Section 9.1** for detailed solutions to common issues:
+- **Wrong Test Environment Pattern** (using `async with await` incorrectly)
+- **Workflow Sandbox Violations** (importing activities module incorrectly)
+- **Test Dependencies Missing** (forgetting `uv sync --all-extras`)
+
+---
+
+## 8) Development Loop
 
 1. **Stop existing worker**
 
@@ -638,7 +849,7 @@ PY
 
 ---
 
-## 8) Troubleshooting Quick Hits
+## 9) Troubleshooting Quick Hits
 
 * **Worker won’t connect:** ensure dev server at `localhost:7233` is up.
 * **Dependency woes:** `uv pip check`, `uv sync --reinstall`, `uv lock --upgrade`.
@@ -653,7 +864,7 @@ NOTE: By default, a non-Temporal exception in a Python Workflow (e.g. a bug) fai
 
 ---
 
-## 8.1) Common Development Pitfalls (Documented from Real Issues)
+## 9.1) Common Development Pitfalls (Documented from Real Issues)
 
 These critical issues have been encountered in actual development and have proven solutions:
 
@@ -740,7 +951,7 @@ Run these in order when troubleshooting:
 
 ---
 
-## 9) Success Checklist (agent must confirm)
+## 10) Success Checklist (agent must confirm)
 
 * [ ] Temporal dev server reachable on `localhost:7233`.
 * [ ] Worker started, wrote `worker.pid`, and is polling the task queue.
