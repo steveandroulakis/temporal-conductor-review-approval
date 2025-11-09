@@ -19,7 +19,7 @@
 
 **If you are migrating a Conductor JSON workflow definition to Temporal**, follow the comprehensive migration guide:
 
-➡️ **See [CONDUCTOR_TO_TEMPORAL.md](./CONDUCTOR_TO_TEMPORAL.md)** for complete migration instructions.
+➡️ **See [Conductor Migration Guide](./conductor-migration/README.md)** for complete migration instructions.
 
 **Quick detection**: You're in a migration scenario if:
 - You have a Conductor JSON workflow definition file (`.json`)
